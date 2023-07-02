@@ -5,15 +5,15 @@ use crate::linklist;
 
 const DEFAULT_MAX_SIZE: u64 = 256;
 
-pub struct HashMap<T, V> {
+pub struct HashMap<T: Eq + Hash, V: Clone> {
     curr_size: usize,
-    arr: [Option<linklist::List<T, V>>; DEFAULT_MAX_SIZE as usize],
+    arr: [Option<linklist::DoublyLinkedList<T, V>>; DEFAULT_MAX_SIZE as usize],
 }
 
 
-impl<T: Clone + Hash + Eq + PartialEq, V> HashMap<T, V> {
+impl<T:  Hash + Eq + Clone, V: Clone> HashMap<T, V> {
 
-    const INIT: Option<linklist::List<T, V>> = None;
+    const INIT: Option<linklist::DoublyLinkedList<T, V>> = None;
 
     pub fn new() -> Self {
         Self {
@@ -38,32 +38,8 @@ impl<T: Clone + Hash + Eq + PartialEq, V> HashMap<T, V> {
         }
     }
 
-    fn insert_new_value(&mut self, key: T, val: V, pos: usize) {
-        let mut list = linklist::List::new();
-        list.push(key, val);
-        self.arr[pos] = Some(list);
-        self.curr_size += 1;
-    }
-
-    fn update_or_link_new_val(key: T, val: V, list: &mut linklist::List<T, V>, cur_size: &mut usize) -> Option<V> where T: Eq {
-        // traverse the link list until either find value. (update),
-        // or stick a new value on the end
-        let key_clone = key.clone();
-        match list.find(key) {
-            Some((_, v)) => {
-                let old_value = std::mem::replace(v, val);
-                Some(old_value)
-            }
-            None => {
-                list.push(key_clone, val);
-                *cur_size += 1;
-                None
-            }
-        }
-    }
-
-    pub fn get(&mut self, key: T) -> Option<&V> {
-        let hash_val = hash_key(key.clone());
+    pub fn get(&mut self, key: T) -> Option<V> {
+        let hash_val: u64 = hash_key(key.clone());
         let position = hash_val % DEFAULT_MAX_SIZE;
 
         match self.arr[position as usize] {
@@ -72,16 +48,46 @@ impl<T: Clone + Hash + Eq + PartialEq, V> HashMap<T, V> {
         }
     }
 
+    fn insert_new_value(&mut self, key: T, val: V, pos: usize) {
+        let mut list = linklist::DoublyLinkedList::new();
+        list.push_back(key, val);
+        self.arr[pos] = Some(list);
+        self.curr_size += 1;
+    }
 
-
-    fn check_list_for_key(key: T, list: &mut linklist::List<T, V>) -> Option<&V> {
-        match list.find(key) {
-            Some((_, v)) => {
-                Some(v)
+    fn update_or_link_new_val(key: T, val: V, list: &mut linklist::DoublyLinkedList<T, V>, cur_size: &mut usize) -> Option<V> where T: Eq {
+        // traverse the link list until either find value. (update),
+        // or stick a new value on the end
+        let key_clone = key.clone();
+        match list.find(key_clone) {
+            Some(node) => {
+                let mut node_borrowed = node.borrow_mut();
+                let old_val = node_borrowed.value.clone();
+                node_borrowed.value = val;
+                Some(old_val)
+            },
+            None => {
+                list.push_back(key, val);
+                *cur_size += 1;
+                None
             }
-            None => None
+        }
+
+    }
+
+    fn check_list_for_key(key: T, list: &mut linklist::DoublyLinkedList<T, V>) -> Option<V>
+    {
+        match list.find(key) {
+            Some(node) => {
+                let node_borrowed = node.borrow();
+                Some(node_borrowed.value.clone())
+            }
+            None => {
+                None
+            }
         }
     }
+
 
     pub fn remove(&mut self, key: T) -> Option<V> {
         let hash_val: u64 = hash_key(key.clone());
@@ -93,12 +99,24 @@ impl<T: Clone + Hash + Eq + PartialEq, V> HashMap<T, V> {
         }
     }
 
-    fn check_item_in_list_and_remove(key: T, list: &mut linklist::List<T, V>, curr_size: &mut usize) -> Option<V> {
-
+    fn check_item_in_list_and_remove(key: T, list: &mut linklist::DoublyLinkedList<T, V>, curr_size: &mut usize) -> Option<V> {
+        match list.find(key) {
+            Some(node) => {
+                let old_val = node.borrow_mut().value.clone();
+                list.remove(&node);
+                *curr_size -= 1;
+                Some(old_val)
+            },
+            None => {
+                None
+            }
+        }
     }
 
     pub fn clear(&mut self) {
-        todo!()
+        // overwrite the array to yeet everything
+        self.curr_size = 0;
+        self.arr = [Self::INIT; DEFAULT_MAX_SIZE as usize];
     }
 }
 
@@ -124,16 +142,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_can_get_item() {
-        let key = "hello".to_string();
-        let value: i32 = 1;
+    fn test_hash_map() {
+        let mut map = HashMap::new();
 
-        let mut my_hash = HashMap::new();
-        my_hash.put(key.clone(), value);
+        assert_eq!(map.get(1), None);
 
-        let result = my_hash.get(key).unwrap();
+        map.put(1, "one".to_string());
 
-        assert_eq!(result, &value);
+        assert_eq!(map.get(1), Some("one".to_string()));
 
+        map.put(1, "uno".to_string());
+
+        assert_eq!(map.get(1), Some("uno".to_string()));
+
+        assert_eq!(map.remove(1), Some("uno".to_string()));
+
+        assert_eq!(map.get(1), None);
     }
 }

@@ -1,76 +1,133 @@
-pub struct List<T, V> {
-    head: Option<Box<Node<T, V>>>,
+use std::cell::RefCell;
+use std::iter::Iterator;
+use std::net::IpAddr::V4;
+use std::rc::{Rc, Weak};
+
+type Link<K, T> = Option<Rc<RefCell<Node<K, T>>>>;
+type WeakLink<K, T> = Option<Weak<RefCell<Node<K, T>>>>;
+
+#[derive(Debug)]
+pub struct Node<K, T> {
+    pub(crate) value: T,
+    pub(crate) key: K,
+    pub(crate) prev: WeakLink<K, T>,
+    pub(crate) next: Link<K, T>,
 }
 
+impl<K, T> Node<K, T> {
+    fn new(key: K, value: T) -> Rc<RefCell<Self>> {
+        Rc::new(RefCell::new(Node {
+            value,
+            key,
+            prev: None,
+            next: None,
+        }))
+    }
+}
 
-impl<T, V> List<T, V> {
+#[derive(Debug)]
+pub struct DoublyLinkedList<K: Eq, T> {
+    pub(crate) head: Link<K, T>,
+    pub(crate) tail: WeakLink<K, T>,
+}
+
+impl<K: Eq, T> DoublyLinkedList<K, T> {
     pub fn new() -> Self {
-        Self {
-            head: None
+        DoublyLinkedList {
+            head: None,
+            tail: None,
         }
     }
 
-    pub fn push(&mut self, key: T, val: V) {
-        let old_head = self.head.take();
-        let new_head = Box::new(Node::new(key, val, old_head));
-        self.head = Some(new_head);
-    }
-
-    pub fn pop(&mut self) -> Option<(T, V)> {
-        self.head.take().map(|n| {
-            self.head = n.next;
-            (n.key, n.value)
-        })
-    }
-
-    pub fn find(&mut self, key: T) -> Option<(&T, &mut V)> where T: Eq {
-        let mut current_head = &mut self.head;
-        while let Some(current_n) = current_head {
-            if current_n.key == key {
-                return Some((&current_n.key, &mut current_n.value));
+    pub fn push_back(&mut self, key: K, value: T) {
+        let new_node = Node::new(key, value);
+        match self.tail.take() {
+            Some(old_tail) => {
+                old_tail.upgrade().unwrap().borrow_mut().next = Some(new_node.clone());
+                new_node.borrow_mut().prev = Some(old_tail);
             }
-            current_head = &mut current_n.next;
+            None => {
+                self.head = Some(new_node.clone());
+            }
+        };
+        self.tail = Some(Rc::downgrade(&new_node));
+    }
+
+    pub fn remove(&mut self, target: &Rc<RefCell<Node<K, T>>>) {
+        let target_borrowed = target.borrow_mut();
+        if let Some(prev) = target_borrowed.prev.as_ref().and_then(|w| w.upgrade()) {
+            prev.borrow_mut().next = target_borrowed.next.clone();
+        } else {
+            self.head = target_borrowed.next.clone();
+        }
+
+        if let Some(next) = target_borrowed.next.as_ref() {
+            next.borrow_mut().prev = target_borrowed.prev.clone();
+        } else {
+            self.tail = target_borrowed.prev.clone();
+        }
+    }
+
+    pub fn find(&self, key: K) -> Option<Rc<RefCell<Node<K, T>>>> {
+        let mut current = self.head.clone();
+        while let Some(node) = current {
+            if node.borrow().key == key {
+                return Some(node.clone());
+            }
+            current = node.borrow().next.clone();
         }
         None
     }
 
-    pub fn remove(&mut self, key: T) -> Option<>
+    pub fn iter(&self) -> DoublyLinkedListRefIterator<K, T> {
+        DoublyLinkedListRefIterator {
+            current: self.head.clone(),
+        }
+    }
 }
 
-impl<T, V> Drop for List<T, V> {
-    fn drop(&mut self) {
-        let mut cur = self.head.take();
-        while let Some(mut n) = cur {
-            cur = n.next.take()
+pub struct DoublyLinkedListIterator<K: Eq, T> {
+    current: Link<K, T>,
+}
+
+impl<K: Eq, T> Iterator for DoublyLinkedListIterator<K, T> {
+    type Item = Rc<RefCell<Node<K, T>>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(current) = self.current.clone() {
+            self.current = current.borrow().next.clone();
+            Some(current)
+        } else {
+            None
+        }
+    }
+}
+
+impl<K: Eq, T> IntoIterator for DoublyLinkedList<K, T> {
+    type Item = Rc<RefCell<Node<K, T>>>;
+    type IntoIter = DoublyLinkedListIterator<K, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        DoublyLinkedListIterator {
+            current: self.head,
         }
     }
 }
 
 
-impl<T: Copy, V: Copy> Into<Vec<(T, V)>> for List<T, V> {
-    fn into(self) -> Vec<(T, V)> {
-        let mut current_head = &self.head;
-        let mut items = Vec::new();
-        while let Some(current_n) = current_head {
-            items.push((current_n.key, current_n.value));
-            current_head = &current_n.next;
-        }
-        items
-    }
+pub struct DoublyLinkedListRefIterator<K: Eq, T> {
+    current: Link<K, T>,
 }
 
-pub struct Node<T, V> {
-    value: V,
-    key: T,
-    next: Option<Box<Node<T, V>>>,
-}
+impl<K: Eq, T> Iterator for DoublyLinkedListRefIterator<K, T> {
+    type Item = Rc<RefCell<Node<K, T>>>;
 
-impl<T, V> Node<T, V> {
-    pub fn new(key: T, value: V, next: Option<Box<Node<T, V>>>) -> Self {
-        Self {
-            key,
-            value,
-            next,
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(current) = self.current.clone() {
+            self.current = current.borrow().next.clone();
+            Some(current)
+        } else {
+            None
         }
     }
 }
@@ -80,50 +137,53 @@ mod tests {
     use super::*;
 
     #[test]
-    fn works_build_list() {
-        let mut list = List::new();
-        list.push(5, "foo");
-        list.push(4, "bar");
-        list.push(3, "buzz");
-        list.push(2, "fizz");
-        list.push(1, "bazz");
+    fn test_push_and_find() {
+        let mut list: DoublyLinkedList<String, i32> = DoublyLinkedList::new();
 
-        assert_eq!(list.head.is_some(), true);
-        assert_eq!(list.pop(), Some((1, "bazz")));
-        assert_eq!(list.pop(), Some((2, "fizz")));
-        assert_eq!(list.pop(), Some((3, "buzz")));
-        assert_eq!(list.pop(), Some((4,"bar")));
-        assert_eq!(list.pop(), Some((5,"foo")));
-        assert_eq!(list.pop(), None)
+        list.push_back("Apple".to_string(), 100);
+        list.push_back("Banana".to_string(), 200);
+        list.push_back("Cherry".to_string(), 300);
+
+        let apple = list.find("Apple".to_string());
+        assert!(apple.is_some());
+        assert_eq!(apple.unwrap().borrow().value, 100);
+
+        let banana = list.find("Banana".to_string());
+        assert!(banana.is_some());
+        assert_eq!(banana.unwrap().borrow().value, 200);
+
+        let cherry = list.find("Cherry".to_string());
+        assert!(cherry.is_some());
+        assert_eq!(cherry.unwrap().borrow().value, 300);
     }
 
     #[test]
-    fn works_build_list_vec() {
-        let mut list = List::new();
-        list.push(5, "foo");
-        list.push(4, "bar");
-        list.push(3, "buzz");
-        list.push(2, "fizz");
-        list.push(1, "bazz");
+    fn test_remove() {
+        let mut list: DoublyLinkedList<String, i32> = DoublyLinkedList::new();
 
+        list.push_back("Apple".to_string(), 100);
+        list.push_back("Banana".to_string(), 200);
+        list.push_back("Cherry".to_string(), 300);
 
-        let items: Vec<(i32, &str)> = list.into();
+        let banana = list.find("Banana".to_string());
+        assert!(banana.is_some());
+        list.remove(&banana.unwrap());
+
+        assert!(list.find("Banana".to_string()).is_none());
     }
 
     #[test]
-    fn works_build_list_find() {
-        let mut list: List<i32, &str> = List::new();
-        list.push(5, "foo");
-        list.push(4, "bar");
-        list.push(3, "buzz");
-        list.push(2, "fizz");
-        list.push(1, "bazz");
+    fn test_iter() {
+        let mut list: DoublyLinkedList<String, i32> = DoublyLinkedList::new();
 
-        if let Some((_, value)) = list.find(2) {
-            let _ = std::mem::replace(value, "fizz2");
-        }
+        list.push_back("Apple".to_string(), 100);
+        list.push_back("Banana".to_string(), 200);
+        list.push_back("Cherry".to_string(), 300);
 
-        assert_eq!(list.pop(), Some((1, "bazz")));
-        assert_eq!(list.pop(), Some((2, "fizz2")));
+        let mut iter = list.iter();
+        assert_eq!(iter.next().unwrap().borrow().key, "Apple");
+        assert_eq!(iter.next().unwrap().borrow().key, "Banana");
+        assert_eq!(iter.next().unwrap().borrow().key, "Cherry");
+        assert!(iter.next().is_none());
     }
 }

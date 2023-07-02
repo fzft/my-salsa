@@ -1,11 +1,7 @@
 mod hashmap;
 mod linklist;
 
-
-use linklist::List;
-
 fn main() {
-    println!("Hello, world!");
 }
 
 type DeriveIndex = u32;
